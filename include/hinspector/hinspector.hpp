@@ -265,8 +265,6 @@ private:
 
 struct machine {
 
-  using size_type = size_t;
-
   processor processor;
   memory memory;
   operating_system operating_system;
