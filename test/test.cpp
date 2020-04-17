@@ -1,11 +1,3 @@
-# hinspector
-
-C++ one-header library to inspect cpu and memory usage (Windows only)
-
-
-## Snippet
-
-```cpp
 #include <iostream>
 
 #include <hinspector/hinspector.hpp>
@@ -32,12 +24,3 @@ int main() {
 
   return 0;
 }
-```
-
-Possible output:
-```
-processor: Intel(R) Core(TM) i7-10510U CPU @ 1.80GHz (8 cores), memory: 16 Gb, system: Windows 10
-Intel
-Usage: processor: 51%, memory: 2 Mb (total 59%)
-```
-
