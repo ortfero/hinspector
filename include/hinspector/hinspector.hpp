@@ -1,124 +1,37 @@
 ﻿#pragma once
 
 
-
 #include <cstdint>
 #include <string>
 #include <iosfwd>
 
+
 #if _WIN32
 
-
-namespace hinspector { namespace detail {
-
-struct os_version_info {
-  uint32_t dwOSVersionInfoSize;
-  uint32_t dwMajorVersion;
-  uint32_t dwMinorVersion;
-  uint32_t dwBuildNumber;
-  uint32_t dwPlatformId;
-  wchar_t  szCSDVersion[ 128 ];     // Maintenance string for PSS usage
-  uint16_t   wServicePackMajor;
-  uint16_t   wServicePackMinor;
-  uint16_t   wSuiteMask;
-  char  wProductType;
-  char  wReserved;
-}; // os_version_info
-
-constexpr char ver_nt_workstation = 0x0000001;
-
-extern "C" long __stdcall RtlGetVersion(os_version_info*);
-
-struct system_info {
-    union {
-        uint32_t dwOemId;          // Obsolete field...do not use
-        struct {
-            uint16_t wProcessorArchitecture;
-            uint16_t wReserved;
-        } DUMMYSTRUCTNAME;
-    } DUMMYUNIONNAME;
-    uint32_t dwPageSize;
-    void* lpMinimumApplicationAddress;
-    void* lpMaximumApplicationAddress;
-    uint32_t* dwActiveProcessorMask;
-    uint32_t dwNumberOfProcessors;
-    uint32_t dwProcessorType;
-    uint32_t dwAllocationGranularity;
-    uint16_t wProcessorLevel;
-    uint16_t wProcessorRevision;
-}; // system_info
-
-
-extern "C" void __stdcall GetSystemInfo(system_info*);
-extern "C" int __stdcall GetPhysicallyInstalledSystemMemory(uint64_t*);
-
-
-struct memory_status_ex {
-  uint32_t dwLength;
-  uint32_t dwMemoryLoad;
-  uint64_t ullTotalPhys;
-  uint64_t ullAvailPhys;
-  uint64_t ullTotalPageFile;
-  uint64_t ullAvailPageFile;
-  uint64_t ullTotalVirtual;
-  uint64_t ullAvailVirtual;
-  uint64_t ullAvailExtendedVirtual;
-}; // memory_status_ex
-
-
-extern "C" int __stdcall GlobalMemoryStatusEx(memory_status_ex* ms);
-
-union filetime {
-  struct {
-    uint32_t dwLowDateTime;
-    uint32_t dwHighDateTime;
-  };
-  uint64_t ullDateTime;
-}; // filetime
-
-
-extern "C" int __stdcall GetSystemTimes(filetime* lpIdleTime,
-                                        filetime* lpKernelTime,
-                                        filetime* lpUserTime);
-
-extern "C" void* __stdcall GetCurrentProcess();
-
-
-struct process_memory_counters {
-  uint32_t cb;
-  uint32_t PageFaultCount;
-  size_t PeakWorkingSetSize;
-  size_t WorkingSetSize;
-  size_t QuotaPeakPagedPoolUsage;
-  size_t QuotaPagedPoolUsage;
-  size_t QuotaPeakNonPagedPoolUsage;
-  size_t QuotaNonPagedPoolUsage;
-  size_t PagefileUsage;
-  size_t PeakPagefileUsage;
-}; // process_memory_counters
-
-
-extern "C" int __stdcall
-K32GetProcessMemoryInfo(void* process,
-                        process_memory_counters* ppsmemCounters,
-                        uint32_t cb);
-
-
-} } // detail // hinspector
-
-
-#if _MSC_VER
-
-
-#pragma comment(lib, "ntdll.lib")
-
+#ifdef _MSC_VER
 #include <intrin.h>
-
 #else
-
 #error Unsupported compiler
-
 #endif
+
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#ifndef VC_EXTRALEAN
+#define VC_EXTRALEAN
+#endif
+
+#if !defined(_AMD64_) && !defined(_X86_)
+#define _AMD64_
+#endif
+
+#include <minwindef.h>
+#include <winnt.h>
+#include <sysinfoapi.h>
+#include <processthreadsapi.h>
+#include <Psapi.h>
 
 #else
 
@@ -229,8 +142,8 @@ struct processor {
 #if _WIN32
 
   static processor identify() {
-    detail::system_info si;
-    detail::GetSystemInfo(&si);
+    SYSTEM_INFO si;
+    GetNativeSystemInfo(&si);
     std::string vendor, title;
     detail::cpuid cpuid;
     cpuid.identify(vendor, title);
@@ -277,7 +190,7 @@ struct memory {
 
   static memory identify() {
     uint64_t physical;
-    detail::GetPhysicallyInstalledSystemMemory(&physical);
+    GetPhysicallyInstalledSystemMemory(&physical);
     physical /= 1024;
     return memory{physical};
   }
@@ -324,11 +237,15 @@ struct operating_system {
 
     std::string title{"Windows"};
 
-    detail::os_version_info vi;
+    OSVERSIONINFOEXW vi;
     vi.dwOSVersionInfoSize = sizeof(vi);
-    detail::RtlGetVersion(&vi);
 
-    if(vi.wProductType != detail::ver_nt_workstation)
+#pragma warning(push)
+#pragma warning(disable:4996)
+    GetVersionExW(reinterpret_cast<OSVERSIONINFOW*>(&vi));
+#pragma warning(pop)
+
+    if(vi.wProductType != VER_NT_WORKSTATION)
       title += " Server";
 
     return operating_system{"Windows", vi.dwMajorVersion, vi.dwMinorVersion};
@@ -419,13 +336,13 @@ struct processor {
 
   processor& slice() noexcept {
 
-    detail::filetime idle_time, kernel_time, user_time;
-    if(!detail::GetSystemTimes(&idle_time, &kernel_time, &user_time))
+    FILETIME idle_time, kernel_time, user_time;
+    if(!GetSystemTimes(&idle_time, &kernel_time, &user_time))
       return *this;
 
 
-    int64_t const used = kernel_time.ullDateTime + user_time.ullDateTime;
-    int64_t const idle = idle_time.ullDateTime;
+    int64_t const used = merge(kernel_time) + merge(user_time);
+    int64_t const idle = merge(idle_time);
 
 
 
@@ -454,6 +371,10 @@ private:
 
   int64_t used_time_{0};
   int64_t idle_time_{0};
+
+  static int64_t merge(FILETIME const& ft) {
+    return int64_t(ft.dwHighDateTime) << 32 | ft.dwLowDateTime;
+  }
 }; // processor
 
 
@@ -476,15 +397,15 @@ struct memory {
     resident_set_size = 0;
     total_usage = 0;
 
-    detail::process_memory_counters pmc;
+    PROCESS_MEMORY_COUNTERS pmc;
     pmc.cb = sizeof(pmc);
-    if(!detail::K32GetProcessMemoryInfo(detail::GetCurrentProcess(), &pmc, sizeof (pmc)))
+    if(!K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof (pmc)))
       return *this;
     resident_set_size = pmc.WorkingSetSize / (1024 * 1024);
 
-    detail::memory_status_ex msx;
+    MEMORYSTATUSEX msx;
     msx.dwLength = sizeof (msx);
-    if(!detail::GlobalMemoryStatusEx(&msx))
+    if(!GlobalMemoryStatusEx(&msx))
       return *this;
 
     total_usage = unsigned(msx.ullAvailPhys * 100 / msx.ullTotalPhys);
